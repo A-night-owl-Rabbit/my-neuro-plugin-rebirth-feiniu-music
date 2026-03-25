@@ -101,3 +101,8 @@ my-neuro-main/live-2d/plugins/community/rebirth-feiniu-music/
 | 歌词气泡配置不生效 | 修改配置后播放下一首歌时生效 |
 | 心动模式失败 | 需要先播放一首歌，心动模式基于当前歌曲推荐 |
 | 登录过期 | 对角色说"登录网易云"或重新运行 setup.bat |
+
+## 作者
+
+爱熬夜的人形兔
+本项目采用 Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) 许可证。

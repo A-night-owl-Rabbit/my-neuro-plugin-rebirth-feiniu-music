@@ -1,0 +1,8 @@
+{
+  "name": "rebirth-feiniu-music",
+  "version": "2.0.0",
+  "private": true,
+  "dependencies": {
+    "@music163/ncm-cli": "^0.1.0"
+  }
+}

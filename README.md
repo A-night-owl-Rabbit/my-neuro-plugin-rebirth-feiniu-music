@@ -18,7 +18,7 @@ my-neuro-main/live-2d/plugins/community/rebirth-feiniu-music/
 
 ### 2. 申请 API Key
 
-前往 [网易云音乐开放平台](https://developer.music.163.com) 注册并申请 API Key，获取 `appId` 和 `privateKey`。
+前往 [网易云音乐开放平台](https://developer.music.163.com) 注册并申请 API Key，获取 `appId` 和 `privateKey`。点击立即入驻，填写相关信息后，入驻成功。从应用管理的应用详情里获取api key。
 
 ### 3. 双击 setup.bat
 

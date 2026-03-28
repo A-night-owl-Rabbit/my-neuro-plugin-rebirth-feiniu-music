@@ -15,24 +15,75 @@ class NeteaseMusic extends Plugin {
         this._currentMeta = null;
         this._isPaused = false;
         this._cfg = {};
+        this._authWarnFingerprint = null;
     }
 
     async onInit() {
         this._queue = new QueueManager((level, msg) => this.context.log(level, msg));
-        this._cfg = this.context.getPluginFileConfig();
+        this._readConfig();
+        await this._syncAuthConfig();
         this.context.log('info', `${TAG} 插件初始化完成`);
     }
 
     async onStart() {
         this._patchMusicPlayer();
+        await this._syncAuthConfig();
         this._applyLyricsBubbleConfig();
         this._updatePlaybackPrompt();
         this.context.log('info', `${TAG} 插件已启动，musicPlayer 已注入 playFromUrl`);
     }
 
+    _readConfig() {
+        this._cfg = this.context.getPluginFileConfig() || {};
+        return this._cfg;
+    }
+
+    async _syncAuthConfig() {
+        const cfg = this._readConfig();
+        const appId = String(cfg.appId || '').trim();
+        const privateKey = String(cfg.privateKey || '').trim();
+        const fingerprint = `${appId}\n${privateKey}`;
+
+        if (!appId && !privateKey) return;
+
+        if (!appId || !privateKey) {
+            if (this._authWarnFingerprint !== fingerprint) {
+                this._authWarnFingerprint = fingerprint;
+                this.context.log('warn', `${TAG} 插件配置中的 appId 和 privateKey 需要同时填写，当前仅检测到部分值`);
+            }
+            return;
+        }
+
+        await ncm.applyAuthConfig({ appId, privateKey });
+        this._authWarnFingerprint = null;
+    }
+
+    async _handleLoginRequired(actionLabel, err) {
+        let status = null;
+        try {
+            status = await ncm.checkLogin();
+        } catch {}
+
+        if (status?.loggedIn) {
+            return `${actionLabel}失败：${err.message}`;
+        }
+
+        let loginMsg = '检测到未登录，请调用 netease_login 进行扫码登录。';
+        try {
+            loginMsg = await this._login();
+        } catch (loginErr) {
+            loginMsg = `自动拉起扫码登录失败：${loginErr.message}`;
+        }
+
+        return [
+            `${actionLabel}前检测到网易云未登录或登录已失效。`,
+            status?.message ? `当前状态：${status.message}` : '',
+            loginMsg
+        ].filter(Boolean).join('\n');
+    }
+
     _applyLyricsBubbleConfig() {
-        this._cfg = this.context.getPluginFileConfig();
-        const c = this._cfg;
+        const c = this._readConfig();
         const minW = (Number(c.lyrics_min_width) > 0) ? Number(c.lyrics_min_width) : 160;
         const maxW = (Number(c.lyrics_max_width) > 0) ? Number(c.lyrics_max_width) : 320;
         const padV = (Number(c.lyrics_padding_v) >= 0) ? Number(c.lyrics_padding_v) : 16;
@@ -75,26 +126,11 @@ class NeteaseMusic extends Plugin {
         const meta = this._currentMeta;
         const qInfo = this._queue?.list();
 
-        let prompt = `你拥有网易云音乐能力，可以搜索歌曲、播放音乐、管理歌单、查看推荐、智能推荐、偏好分析。
-当用户要求听歌、放音乐、搜歌、推荐歌曲时，使用 netease_ 开头的工具。
-当用户说"播放每日推荐""放推荐的歌"等要求播放推荐时，调用 netease_recommend 并设置 play=true。
-当用户说"播放歌单xxx"时，调用 netease_play_playlist，会加载歌单全部歌曲到队列播放。
-当用户说"随机播放""打乱播放"时，调用 netease_shuffle 开启随机模式，或在播放歌单/推荐时设置 shuffle=true。
-当用户说"推荐点喜欢的""私人漫游""根据我的口味推荐"时，调用 netease_smart_recommend mode=fm。
-当用户说"类似的歌""心动模式""和这首差不多的"时，调用 netease_smart_recommend mode=heartbeat。
-当用户说"分析我的偏好""我喜欢什么音乐"时，调用 netease_preference。`;
+        let prompt = '可使用本插件注册的 netease_* 工具处理网易云相关请求；按用户意图选用工具即可。';
 
         if (isPlaying && meta) {
             const queueStr = qInfo?.total > 1 ? `，队列 ${(qInfo.currentIndex + 1)}/${qInfo.total}` : '';
-            prompt += `
-
-【当前播放状态】正在${this._isPaused ? '暂停' : '播放'}: ${meta.title} - ${meta.artist}${queueStr}
-重要规则：
-- 音乐正在播放中，不要因为用户发起新话题就停止音乐
-- 只有当用户明确说"停止播放""关掉音乐""别放了"等停止指令时，才调用 netease_control 的 stop
-- 用户说其他话题（聊天、提问等）时，音乐继续播放，正常回答用户问题即可
-- 用户说"暂停""下一首""音量调低"等控制指令时，调用对应的 netease_control
-- 不要主动提及正在播放音乐，除非用户问起`;
+            prompt += ` 当前${this._isPaused ? '暂停' : '播放'}: ${meta.title} - ${meta.artist}${queueStr}；勿因无关对话停止音乐，仅响应明确的播放控制或停止指令。`;
         }
 
         this.context.addSystemPromptPatch('netease_music_capability', prompt);
@@ -372,6 +408,7 @@ class NeteaseMusic extends Plugin {
 
     async executeTool(name, params) {
         try {
+            await this._syncAuthConfig();
             switch (name) {
                 case 'netease_search': return await this._search(params);
                 case 'netease_play': return await this._play(params);
@@ -388,6 +425,9 @@ class NeteaseMusic extends Plugin {
                 default: return `未知工具: ${name}`;
             }
         } catch (err) {
+            if (ncm.isLoginRequiredError(err)) {
+                return await this._handleLoginRequired('执行网易云操作', err);
+            }
             this.context.log('error', `${TAG} 工具执行错误 [${name}]: ${err.message}`);
             return `操作失败: ${err.message}`;
         }
@@ -443,6 +483,9 @@ class NeteaseMusic extends Plugin {
                 this._updatePlaybackPrompt();
                 return `正在播放: ${song.name} - ${song.artist} [${song.durationStr}]`;
             } catch (err) {
+                if (ncm.isLoginRequiredError(err)) {
+                    return await this._handleLoginRequired('播放歌曲', err);
+                }
                 this.context.log('warn', `${TAG} ${song.name} 播放失败: ${err.message}，尝试下一首`);
                 continue;
             }
@@ -753,12 +796,30 @@ class NeteaseMusic extends Plugin {
 
     // ---- 登录 ----
     async _login() {
+        await this._syncAuthConfig();
         const status = await ncm.checkLogin();
         if (status.loggedIn) return `已登录: ${status.message}`;
 
         const result = await ncm.login();
-        if (result.qrCodeUrl) {
-            return `请用网易云音乐App扫码登录:\n${result.qrCodeUrl}\n\n扫码完成后，可以再次调用此工具确认登录状态`;
+        const qrUrl = result.qrCodeUrl || result.clickableUrl;
+        if (qrUrl && typeof document !== 'undefined') {
+            try {
+                const { showNeteaseLoginQrModal } = require('./login-qr-modal');
+                await showNeteaseLoginQrModal({
+                    qrCodeUrl: qrUrl,
+                    message: result.message
+                });
+            } catch (e) {
+                this.context.log('warn', `${TAG} 扫码弹窗失败: ${e?.message || e}`);
+            }
+            return [
+                '已在窗口内弹出扫码遮罩；扫码成功后窗口会自动关闭（插件在轮询 ncm-cli 登录状态）。',
+                '若按钮点不动，请稍等再试；本窗口会定时强制恢复可点击。',
+                `备用链接：${qrUrl}`
+            ].join('\n');
+        }
+        if (qrUrl) {
+            return `请用网易云音乐App扫码登录:\n${qrUrl}\n\n扫码完成后，可以再次调用此工具确认登录状态`;
         }
         return result.message || '登录请求已发送';
     }

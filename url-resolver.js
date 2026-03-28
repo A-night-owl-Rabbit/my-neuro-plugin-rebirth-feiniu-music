@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const { parseNcmCliStdout } = require('./ncm-bridge');
+
 const _localBin = path.join(__dirname, 'node_modules', '.bin', 'ncm-cli');
 const NCM_BIN = (fs.existsSync(_localBin) || fs.existsSync(_localBin + '.cmd')) ? `"${_localBin}"` : 'ncm-cli';
 
@@ -149,10 +151,8 @@ function fetchLyricsViaCli(encryptedId) {
             { timeout: 15000, encoding: 'utf-8', windowsHide: true },
             (err, stdout) => {
                 if (err) return resolve(null);
-                try {
-                    const json = JSON.parse(stdout);
-                    resolve(json.data?.lyric || null);
-                } catch { resolve(null); }
+                const json = parseNcmCliStdout(stdout);
+                resolve(json?.data?.lyric || null);
             });
     });
 }

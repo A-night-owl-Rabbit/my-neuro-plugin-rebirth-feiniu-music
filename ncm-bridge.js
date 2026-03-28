@@ -6,9 +6,97 @@ const CMD_TIMEOUT = 30_000;
 
 const _localBin = path.join(__dirname, 'node_modules', '.bin', 'ncm-cli');
 const NCM_BIN = (fs.existsSync(_localBin) || fs.existsSync(_localBin + '.cmd')) ? `"${_localBin}"` : 'ncm-cli';
+let _authConfigFingerprint = null;
 
 function escapeShellArg(str) {
     return str.replace(/"/g, '\\"').replace(/\n/g, ' ');
+}
+
+/**
+ * ncm-cli 在 JSON 前可能打印升级提示等非 JSON 行，整段 stdout 无法 JSON.parse。
+ * 从首个 { 起按括号深度截取第一个完整对象再解析。
+ */
+function parseNcmCliStdout(stdout) {
+    const s = String(stdout || '').trim();
+    if (!s) return null;
+    try {
+        return JSON.parse(s);
+    } catch { /* fall through */ }
+    const start = s.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < s.length; i++) {
+        const c = s[i];
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (c === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+        if (c === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+        if (c === '{') depth++;
+        else if (c === '}') {
+            depth--;
+            if (depth === 0) {
+                try {
+                    return JSON.parse(s.slice(start, i + 1));
+                } catch {
+                    return null;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/** 把 ncm-cli 典型错误转成可读说明（与杀 mpv 假进程无关） */
+function clarifyNcmCliError(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return text;
+    // 未登录或会话失效时，部分版本会报 unknown command 'search'
+    if (/unknown command\s+['"]?search['"]?/i.test(text) || /unknown command.*\bsearch\b/i.test(text)) {
+        return (
+            `${text}\n\n` +
+            '【登录状态】该错误一般表示 ncm-cli 当前未登录或登录已失效，与结束假 mpv/Node 桥接进程无关；' +
+            '登录票据保存在本机 ncm-cli 配置目录，杀播放器进程不会清掉。\n' +
+            '请在终端执行 `ncm-cli login --check` 确认；若未登录请 `ncm-cli login` 扫码，或在肥牛里调用 netease_login。'
+        );
+    }
+    if (/not logged|未登录|需要登录|please login|login required/i.test(text)) {
+        return `${text}\n\n请先执行 ncm-cli login（或 netease_login）完成扫码授权。`;
+    }
+    return text;
+}
+
+function normalizeConfigValue(value) {
+    if (value == null) return '';
+    return String(value).trim();
+}
+
+function isLoginRequiredError(error) {
+    const text = String(error?.message || error || '').trim();
+    if (!text) return false;
+    return /未登录|登录已失效|需要登录|请先执行\s*ncm-cli\s+login|请先.*扫码授权|please login|login required|not logged|unknown command\s+['"]?search['"]?/i.test(text);
+}
+
+function execRaw(args) {
+    return new Promise((resolve, reject) => {
+        const cmd = `${NCM_BIN} ${args}`;
+        exec(cmd, { timeout: CMD_TIMEOUT, encoding: 'utf-8', windowsHide: true }, (err, stdout, stderr) => {
+            if (err) {
+                return reject(new Error(clarifyNcmCliError(stderr || stdout || err.message)));
+            }
+            resolve({ stdout, stderr });
+        });
+    });
 }
 
 function run(args) {
@@ -16,19 +104,43 @@ function run(args) {
         const cmd = `${NCM_BIN} ${args} --output json`;
         exec(cmd, { timeout: CMD_TIMEOUT, encoding: 'utf-8', windowsHide: true }, (err, stdout, stderr) => {
             if (err && !stdout) {
-                return reject(new Error(stderr || err.message));
+                return reject(new Error(clarifyNcmCliError(stderr || err.message)));
             }
-            try {
-                const json = JSON.parse(stdout);
-                if (json.code && json.code !== 200) {
-                    return reject(new Error(json.message || `API错误 (code: ${json.code})`));
-                }
-                resolve(json);
-            } catch {
-                resolve({ raw: stdout, stderr });
+            const json = parseNcmCliStdout(stdout);
+            if (!json) {
+                return resolve({ raw: stdout, stderr });
             }
+            if (json.code && json.code !== 200) {
+                return reject(new Error(clarifyNcmCliError(json.message || `API错误 (code: ${json.code})`)));
+            }
+            resolve(json);
         });
     });
+}
+
+async function applyAuthConfig(config = {}) {
+    const appId = normalizeConfigValue(config.appId);
+    const privateKey = normalizeConfigValue(config.privateKey);
+    const fingerprint = `${appId}\n${privateKey}`;
+
+    if (_authConfigFingerprint === fingerprint) {
+        return { changed: false, configured: !!(appId && privateKey) };
+    }
+
+    if (!appId && !privateKey) {
+        _authConfigFingerprint = fingerprint;
+        return { changed: false, configured: false };
+    }
+
+    if (appId) {
+        await execRaw(`config set appId "${escapeShellArg(appId)}"`);
+    }
+    if (privateKey) {
+        await execRaw(`config set privateKey "${escapeShellArg(privateKey)}"`);
+    }
+
+    _authConfigFingerprint = fingerprint;
+    return { changed: true, configured: !!(appId && privateKey) };
 }
 
 async function searchSongs(keyword, limit = 5) {
@@ -335,6 +447,7 @@ async function userListenRanking(limit = 50) {
 }
 
 module.exports = {
+    parseNcmCliStdout, applyAuthConfig, isLoginRequiredError,
     searchSongs, searchAll, recommendDaily, checkLogin, login, run,
     playlistCreated, playlistCollected, playlistTracks, playlistDetail,
     playlistCreate, playlistAddSongs, playlistRemoveSongs,

@@ -1,65 +1,79 @@
 {
+  "appId": {
+    "title": "网易云开放平台 App ID",
+    "description": "用于同步到 ncm-cli 的开放平台 App ID，填写后插件会在启动和工具调用时自动写入",
+    "type": "string",
+    "default": "",
+    "value": ""
+  },
+  "privateKey": {
+    "title": "网易云开放平台 Private Key",
+    "description": "用于同步到 ncm-cli 的开放平台 Private Key，建议与 App ID 一起填写",
+    "type": "string",
+    "default": "",
+    "value": ""
+  },
   "lyrics_offset_x": {
     "title": "歌词气泡水平偏移",
     "description": "歌词气泡相对模型中心的水平偏移(px)，负值偏左，正值偏右",
     "type": "number",
     "default": -20,
-    "value": ""
+    "value": -20
   },
   "lyrics_offset_y": {
     "title": "歌词气泡垂直偏移",
     "description": "歌词气泡相对模型中心的垂直偏移(px)，负值偏上，正值偏下",
     "type": "number",
     "default": -20,
-    "value": ""
+    "value": -20
   },
   "lyrics_min_width": {
     "title": "歌词气泡最小宽度",
     "description": "歌词气泡最小宽度(px)",
     "type": "number",
     "default": 160,
-    "value": ""
+    "value": 160
   },
   "lyrics_max_width": {
     "title": "歌词气泡最大宽度",
     "description": "歌词气泡最大宽度(px)",
     "type": "number",
     "default": 320,
-    "value": ""
+    "value": 320
   },
   "lyrics_padding_v": {
     "title": "歌词气泡垂直内边距",
     "description": "歌词气泡上下内边距(px)",
     "type": "number",
     "default": 16,
-    "value": ""
+    "value": 16
   },
   "lyrics_padding_h": {
     "title": "歌词气泡水平内边距",
     "description": "歌词气泡左右内边距(px)",
     "type": "number",
     "default": 24,
-    "value": ""
+    "value": 24
   },
   "lyrics_font_size": {
     "title": "歌词气泡字体大小",
     "description": "歌词文字字体大小(px)",
     "type": "number",
     "default": 16,
-    "value": ""
+    "value": 16
   },
   "lyrics_border_radius": {
     "title": "歌词气泡圆角",
     "description": "歌词气泡圆角半径(px)",
     "type": "number",
     "default": 24,
-    "value": ""
+    "value": 24
   },
   "lyrics_bubble_scale": {
     "title": "歌词气泡缩放",
     "description": "歌词气泡整体缩放比例，1.0为原始大小，建议范围0.4~2.0",
     "type": "number",
     "default": 1.0,
-    "value": ""
+    "value": 1.0
   }
 }

@@ -177,6 +177,11 @@ class QueueManager {
                 this._isTransitioning = false;
                 return { song, position: this._currentIndex + 1, total: this._queue.length };
             } catch (err) {
+                if (ncm.isLoginRequiredError(err)) {
+                    this._isBusyResolving = false;
+                    this._isTransitioning = false;
+                    throw err;
+                }
                 this._log('warn', `🎵 [网易云] 直接解析失败: ${song.name}，搜索可播放版本...`);
             }
         }
@@ -219,10 +224,15 @@ class QueueManager {
                         this._log('info', `🎵 [网易云] 搜索到原版: ${r.name} - ${r.artist}`);
                         await playFn(resolved.url, resolved.metadata);
                         return { song, position: this._currentIndex + 1, total: this._queue.length };
-                    } catch { continue; }
+                    } catch (err) {
+                        if (ncm.isLoginRequiredError(err)) throw err;
+                        continue;
+                    }
                 }
             }
-        } catch {}
+        } catch (err) {
+            if (ncm.isLoginRequiredError(err)) throw err;
+        }
 
         // ② 宽松搜索：仅用歌名，找任何可播放的同名/相似版本
         try {
@@ -242,9 +252,14 @@ class QueueManager {
                     };
                     await playFn(resolved.url, metadata);
                     return { song: { ...song, altVersion: `${r.name} - ${r.artist}` }, position: this._currentIndex + 1, total: this._queue.length };
-                } catch { continue; }
+                } catch (err) {
+                    if (ncm.isLoginRequiredError(err)) throw err;
+                    continue;
+                }
             }
-        } catch {}
+        } catch (err) {
+            if (ncm.isLoginRequiredError(err)) throw err;
+        }
 
         return null;
     }

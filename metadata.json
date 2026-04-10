@@ -2,7 +2,7 @@
   "name": "rebirth-feiniu-music",
   "displayName": "重生之网易云没火肥牛要火了",
   "description": "网易云音乐集成：搜索、播放、歌单管理、每日推荐、智能推荐（私人漫游/心动模式/雷达歌单）、偏好分析、随机播放，完整 Live2D 联动（嘴型同步、歌词气泡、麦克风动作）",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "xxynet",
   "main": "index.js"
 }

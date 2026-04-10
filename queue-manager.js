@@ -165,25 +165,34 @@ class QueueManager {
         const modeTag = this._shuffleMode ? '🔀' : '';
         this._log('info', `🎵 [网易云] ${modeTag}播放队列 [${this._currentIndex + 1}/${this._queue.length}]: ${song.name} - ${song.artist}`);
 
-        this._isBusyResolving = true;
-
-        // playable=false 时跳过直接解析（会白等 20 秒），直接走搜索路径
-        if (song.playable) {
-            try {
-                const resolved = await urlResolver.resolve(song);
-                this._isBusyResolving = false;
-                this._consecutiveSkips = 0;
-                await playFn(resolved.url, resolved.metadata);
-                this._isTransitioning = false;
-                return { song, position: this._currentIndex + 1, total: this._queue.length };
-            } catch (err) {
-                if (ncm.isLoginRequiredError(err)) {
-                    this._isBusyResolving = false;
-                    this._isTransitioning = false;
-                    throw err;
-                }
-                this._log('warn', `🎵 [网易云] 直接解析失败: ${song.name}，搜索可播放版本...`);
+        if (song.st < 0) {
+            this._log('warn', `🎵 [网易云] 跳过: ${song.name}（已下架或无版权 st=${song.st}）`);
+            this._consecutiveSkips++;
+            if (this._consecutiveSkips >= MAX_CONSECUTIVE_SKIPS) {
+                this._log('warn', `🎵 [网易云] 连续 ${MAX_CONSECUTIVE_SKIPS} 首无法播放，暂停队列`);
+                this._isActive = false;
+                return null;
             }
+            if (this.hasNext) return this.playNext(playFn);
+            this._isActive = false;
+            return null;
+        }
+
+        this._isBusyResolving = true;
+        try {
+            const resolved = await urlResolver.resolve(song);
+            this._isBusyResolving = false;
+            this._consecutiveSkips = 0;
+            await playFn(resolved.url, resolved.metadata);
+            this._isTransitioning = false;
+            return { song, position: this._currentIndex + 1, total: this._queue.length };
+        } catch (err) {
+            if (ncm.isLoginRequiredError(err)) {
+                this._isBusyResolving = false;
+                this._isTransitioning = false;
+                throw err;
+            }
+            this._log('warn', `🎵 [网易云] 直接解析失败: ${song.name}，搜索可播放版本...`);
         }
 
         // 三级降级：① 搜原版(歌名+歌手) → ② 搜替代版(仅歌名) → ③ 跳过
@@ -196,7 +205,8 @@ class QueueManager {
             return result;
         }
 
-        this._log('warn', `🎵 [网易云] 跳过: ${song.name}（原版和替代版均不可用）`);
+        const reason = song.vip && !song.playable ? 'VIP歌曲且开放平台未授权' : !song.playable ? '开放平台未授权' : song.vip ? 'VIP歌曲' : '无法获取播放地址';
+        this._log('warn', `🎵 [网易云] 跳过: ${song.name}（${reason}，原版和替代版均不可用）`);
         this._consecutiveSkips++;
         this._isTransitioning = false;
 
@@ -213,34 +223,38 @@ class QueueManager {
 
     async _findAndPlay(song, playFn) {
         // ① 精确搜索：歌名 + 第一位歌手，找同名歌曲
+        // 优先尝试 playable=true 的，再尝试 playable=false 的（VIP 用户可能仍可播放）
         try {
             const keyword = `${song.name} ${(song.artist || '').split('/')[0]}`.trim();
             const exactResults = await ncm.searchSongs(keyword, 5);
-            for (const r of exactResults) {
-                if (!r.playable) continue;
-                if (r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name)) {
-                    try {
-                        const resolved = await urlResolver.resolve(r);
-                        this._log('info', `🎵 [网易云] 搜索到原版: ${r.name} - ${r.artist}`);
-                        await playFn(resolved.url, resolved.metadata);
-                        return { song, position: this._currentIndex + 1, total: this._queue.length };
-                    } catch (err) {
-                        if (ncm.isLoginRequiredError(err)) throw err;
-                        continue;
-                    }
+            const nameMatches = exactResults.filter(r =>
+                r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name)
+            );
+            const sorted = [...nameMatches.filter(r => r.playable), ...nameMatches.filter(r => !r.playable)];
+            for (const r of sorted) {
+                try {
+                    const resolved = await urlResolver.resolve(r);
+                    this._log('info', `🎵 [网易云] 搜索到原版: ${r.name} - ${r.artist}`);
+                    await playFn(resolved.url, resolved.metadata);
+                    return { song, position: this._currentIndex + 1, total: this._queue.length };
+                } catch (err) {
+                    if (ncm.isLoginRequiredError(err)) throw err;
+                    continue;
                 }
             }
         } catch (err) {
             if (ncm.isLoginRequiredError(err)) throw err;
         }
 
-        // ② 宽松搜索：仅用歌名，找任何可播放的同名/相似版本
+        // ② 宽松搜索：仅用歌名，找任何同名/相似版本（同样优先 playable=true）
         try {
             const results = await ncm.searchSongs(song.name, 10);
-            for (const r of results) {
-                if (r.songId === song.songId) continue;
-                if (!r.playable) continue;
-                if (!(r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name))) continue;
+            const candidates = results.filter(r =>
+                r.songId !== song.songId &&
+                (r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name))
+            );
+            const sorted = [...candidates.filter(r => r.playable), ...candidates.filter(r => !r.playable)];
+            for (const r of sorted) {
                 try {
                     const resolved = await urlResolver.resolve(r);
                     this._log('info', `🎵 [网易云] 播放替代版: ${r.name} - ${r.artist}`);

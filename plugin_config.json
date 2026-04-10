@@ -13,6 +13,13 @@
     "default": "",
     "value": ""
   },
+  "audio_quality": {
+    "title": "音频质量",
+    "description": "播放音质等级：standard(标准128k), higher(较高192k), exhigh(极高320k), lossless(无损), hires(Hi-Res)。VIP用户可选更高音质",
+    "type": "string",
+    "default": "exhigh",
+    "value": "exhigh"
+  },
   "lyrics_offset_x": {
     "title": "歌词气泡水平偏移",
     "description": "歌词气泡相对模型中心的水平偏移(px)，负值偏左，正值偏右",

@@ -13,9 +13,15 @@ const NCM_BIN = (fs.existsSync(_localBin) || fs.existsSync(_localBin + '.cmd')) 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const INTERCEPT_DIR = path.join(os.tmpdir(), 'ncm-mpv-intercept');
 const URL_FILE = path.join(INTERCEPT_DIR, 'captured_url.txt');
-const NCM_PLAY_TIMEOUT = 20000;
+const NCM_PLAY_TIMEOUT = 12000;
+const VALID_LEVELS = new Set(['standard', 'higher', 'exhigh', 'lossless', 'hires']);
 
 let _resolveLock = Promise.resolve();
+let _audioQuality = 'exhigh';
+
+function setAudioQuality(level) {
+    _audioQuality = VALID_LEVELS.has(level) ? level : 'exhigh';
+}
 
 function httpRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
@@ -121,15 +127,19 @@ async function resolveViaOuterUrl(songId) {
 }
 
 async function resolveViaEnhanceApi(songId) {
-    try {
-        const body = `ids=[${songId}]&level=standard&encodeType=mp3`;
-        const result = await httpRequest('https://music.163.com/api/song/enhance/player/url/v1', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: 'appver=1.5.0.75771; os=linux;' },
-            body
-        });
-        if (result.data?.data?.[0]?.url) return result.data.data[0].url;
-    } catch {}
+    const levels = [_audioQuality, 'exhigh', 'standard'].filter((v, i, a) => a.indexOf(v) === i);
+    for (const level of levels) {
+        try {
+            const body = `ids=[${songId}]&level=${level}&encodeType=`;
+            const result = await httpRequest('https://music.163.com/api/song/enhance/player/url/v1', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: 'appver=1.5.0.75771; os=linux;' },
+                body
+            });
+            const item = result.data?.data?.[0];
+            if (item?.url && item.code === 200) return item.url;
+        } catch {}
+    }
     return null;
 }
 
@@ -174,7 +184,13 @@ async function resolve(songInfo) {
     if (songInfo.encryptedId) lyrics = await fetchLyricsViaCli(songInfo.encryptedId);
     if (!lyrics) lyrics = await fetchLyricsViaApi(songInfo.songId);
     if (!urlResult.url) {
-        throw new Error(`"${songInfo.name}"暂无开放平台播放权限（App可播放但API未授权），已跳过`);
+        const reasons = [];
+        if (songInfo.st < 0) reasons.push('歌曲已下架或无版权(st<0)');
+        else if (songInfo.fee === 4) reasons.push('需单独购买专辑(fee=4)');
+        else if (songInfo.fee === 1 || songInfo.vip) reasons.push('VIP专属歌曲，需登录VIP账号(fee=1)');
+        if (!songInfo.playable) reasons.push('开放平台未授权(playFlag=false)');
+        const detail = reasons.length ? reasons.join('；') : 'App可播放但开放平台API未授权';
+        throw new Error(`"${songInfo.name}"无法获取播放地址：${detail}`);
     }
     return {
         url: urlResult.url, source: urlResult.source, lyrics,
@@ -186,4 +202,4 @@ async function resolve(songInfo) {
     };
 }
 
-module.exports = { resolve, resolveAudioUrl, fetchLyricsViaCli, fetchLyricsViaApi };
+module.exports = { resolve, resolveAudioUrl, fetchLyricsViaCli, fetchLyricsViaApi, setAudioQuality };

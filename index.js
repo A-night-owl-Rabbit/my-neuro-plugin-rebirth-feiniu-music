@@ -8,6 +8,16 @@ const TAG = '🎵 [肥牛音乐]';
 const STOP_KEYWORDS = /停止播放|停止音乐|别[放播]了|关掉音乐|不[要想听]了|停[下吧]|关[了掉]|stop\s*music/i;
 const CONTROL_KEYWORDS = /暂停|继续|恢复播放|下一首|上一首|切歌|换一首|音量|声音[大小]|跳[到过]|快进/i;
 
+function songStatusTag(s) {
+    if (s.st < 0) return '已下架';
+    if (s.fee === 4) return '需购买专辑';
+    if (s.fee === 1 || s.vip) {
+        return s.playable ? 'VIP' : 'VIP·未授权';
+    }
+    if (!s.playable) return '未授权';
+    return '';
+}
+
 class NeteaseMusic extends Plugin {
     constructor(metadata, context) {
         super(metadata, context);
@@ -16,6 +26,8 @@ class NeteaseMusic extends Plugin {
         this._isPaused = false;
         this._cfg = {};
         this._authWarnFingerprint = null;
+        this._loginCheckTimer = null;
+        this._lastLoginOk = false;
     }
 
     async onInit() {
@@ -29,8 +41,48 @@ class NeteaseMusic extends Plugin {
         this._patchMusicPlayer();
         await this._syncAuthConfig();
         this._applyLyricsBubbleConfig();
+        this._applyAudioQuality();
         this._updatePlaybackPrompt();
         this.context.log('info', `${TAG} 插件已启动，musicPlayer 已注入 playFromUrl`);
+
+        this._scheduleLoginCheck();
+    }
+
+    _applyAudioQuality() {
+        const c = this._readConfig();
+        const level = String(c.audio_quality || 'exhigh').trim().toLowerCase();
+        urlResolver.setAudioQuality(level);
+        this.context.log('info', `${TAG} 音频质量: ${level}`);
+    }
+
+    // ==================== 登录状态保活 ====================
+
+    _scheduleLoginCheck() {
+        if (this._loginCheckTimer) clearInterval(this._loginCheckTimer);
+
+        const CHECK_INTERVAL = 30 * 60 * 1000; // 30 分钟
+
+        const doCheck = async () => {
+            try {
+                const status = await ncm.checkLogin();
+                if (status.loggedIn) {
+                    if (!this._lastLoginOk) {
+                        this.context.log('info', `${TAG} 登录状态正常: ${status.message}`);
+                    }
+                    this._lastLoginOk = true;
+                } else {
+                    if (this._lastLoginOk) {
+                        this.context.log('warn', `${TAG} 登录状态已失效，下次操作时将自动拉起扫码登录`);
+                    }
+                    this._lastLoginOk = false;
+                }
+            } catch {
+                this._lastLoginOk = false;
+            }
+        };
+
+        setTimeout(() => doCheck(), 3000);
+        this._loginCheckTimer = setInterval(() => doCheck(), CHECK_INTERVAL);
     }
 
     _readConfig() {
@@ -190,9 +242,9 @@ class NeteaseMusic extends Plugin {
             }
 
             this.currentAudio.onended = () => {
-                this.stopMouthAnimation();
-                this.stopLyricsSync();
                 this.isPlaying = false;
+                this.stopLyricsSync();
+                this.stopMouthAnimation();
                 plugin._isPaused = false;
                 if (!plugin._queue.hasNext) plugin._currentMeta = null;
                 if (this.emotionMapper && !plugin._queue.hasNext) this.emotionMapper.playDefaultMotion();
@@ -202,9 +254,9 @@ class NeteaseMusic extends Plugin {
 
             this.currentAudio.onerror = (e) => {
                 plugin.context.log('error', `${TAG} 音频播放错误: ${e?.message || '未知错误'}`);
-                this.stopMouthAnimation();
-                this.stopLyricsSync();
                 this.isPlaying = false;
+                this.stopLyricsSync();
+                this.stopMouthAnimation();
                 plugin._isPaused = false;
                 if (this.emotionMapper && !plugin._queue.hasNext) this.emotionMapper.playDefaultMotion();
                 plugin._updatePlaybackPrompt();
@@ -409,6 +461,24 @@ class NeteaseMusic extends Plugin {
     async executeTool(name, params) {
         try {
             await this._syncAuthConfig();
+
+            const NEEDS_LOGIN = new Set([
+                'netease_search', 'netease_play', 'netease_play_playlist',
+                'netease_recommend', 'netease_playlist', 'netease_smart_recommend',
+                'netease_preference'
+            ]);
+            if (NEEDS_LOGIN.has(name) && !this._lastLoginOk) {
+                try {
+                    const status = await ncm.checkLogin();
+                    this._lastLoginOk = status.loggedIn;
+                    if (!status.loggedIn) {
+                        return await this._handleLoginRequired(`执行 ${name}`, new Error('登录已失效'));
+                    }
+                } catch (e) {
+                    this._lastLoginOk = false;
+                }
+            }
+
             switch (name) {
                 case 'netease_search': return await this._search(params);
                 case 'netease_play': return await this._play(params);
@@ -426,6 +496,7 @@ class NeteaseMusic extends Plugin {
             }
         } catch (err) {
             if (ncm.isLoginRequiredError(err)) {
+                this._lastLoginOk = false;
                 return await this._handleLoginRequired('执行网易云操作', err);
             }
             this.context.log('error', `${TAG} 工具执行错误 [${name}]: ${err.message}`);
@@ -446,10 +517,52 @@ class NeteaseMusic extends Plugin {
         const songs = await ncm.searchSongs(keyword, limit);
         if (!songs.length) return `未找到关于"${keyword}"的歌曲`;
 
-        const lines = songs.map((s, i) =>
-            `${i + 1}. ${s.name} - ${s.artist} [${s.durationStr}]${s.vip ? ' (VIP)' : ''}${s.playable ? '' : ' (不可播放)'}`
-        );
+        const lines = songs.map((s, i) => {
+            const tag = songStatusTag(s);
+            const tagStr = tag ? ` (${tag})` : '';
+            return `${i + 1}. ${s.name} - ${s.artist} [${s.durationStr}]${tagStr}`;
+        });
         return `搜索"${keyword}"的结果:\n${lines.join('\n')}`;
+    }
+
+    /**
+     * 对搜索结果按「关键词相关性 + 可播放性」综合排序。
+     * 避免伴奏版、纯音乐版等低相关度结果因 playable/非VIP 而被优先选中。
+     */
+    _rankCandidates(alive, keyword) {
+        const kw = keyword.toLowerCase();
+        const kwTokens = kw.split(/[\s/]+/).filter(Boolean);
+
+        const scoreSong = (s) => {
+            const name = (s.name || '').toLowerCase();
+            const artist = (s.artist || '').toLowerCase();
+            let score = 0;
+
+            // 惩罚：伴奏/纯音乐/instrument 等用户通常不想要的版本
+            if (/伴奏|instrumental|inst\b|纯音乐|off\s*vocal/i.test(s.name)) {
+                score -= 50;
+            }
+
+            // 歌名精确匹配某个关键词 token 加分
+            for (const t of kwTokens) {
+                if (name === t) score += 30;
+                else if (name.includes(t)) score += 15;
+                if (artist.includes(t)) score += 10;
+            }
+
+            // 歌名完全包含在 keyword 里（或反过来）加分
+            if (kw.includes(name) || name.includes(kw)) score += 20;
+
+            // 可播放性加分（但权重低于相关性）
+            if (s.playable) score += 5;
+
+            return score;
+        };
+
+        return alive
+            .map(s => ({ song: s, score: scoreSong(s) }))
+            .sort((a, b) => b.score - a.score)
+            .map(x => x.song);
     }
 
     // ---- 播放单曲 ----
@@ -463,8 +576,8 @@ class NeteaseMusic extends Plugin {
         const mp = global.musicPlayer;
         if (!mp?.playFromUrl) return '播放器未就绪，请稍后再试';
 
-        const playable = songs.filter(s => s.playable);
-        const candidates = playable.length ? playable : songs;
+        const alive = songs.filter(s => !(s.st < 0));
+        const candidates = this._rankCandidates(alive, keyword);
 
         for (const song of candidates) {
             try {
@@ -491,7 +604,21 @@ class NeteaseMusic extends Plugin {
             }
         }
 
-        return `"${keyword}"的搜索结果均无法播放（可能需要VIP权限）。\n可播放的搜索结果:\n${songs.map((s, i) => `${i + 1}. ${s.name} - ${s.artist}${s.vip ? ' (VIP)' : ''}`).join('\n')}`;
+        const delistedCount = songs.filter(s => s.st < 0).length;
+        const vipCount = songs.filter(s => (s.fee === 1 || s.vip) && s.st >= 0).length;
+        const purchaseCount = songs.filter(s => s.fee === 4).length;
+        const noAuthCount = songs.filter(s => !s.playable && s.st >= 0).length;
+        const reasons = [];
+        if (delistedCount) reasons.push(`${delistedCount}首已下架`);
+        if (vipCount) reasons.push(`${vipCount}首VIP歌曲（需VIP账号登录）`);
+        if (purchaseCount) reasons.push(`${purchaseCount}首需购买专辑`);
+        if (noAuthCount) reasons.push(`${noAuthCount}首未获开放平台授权`);
+        const reasonStr = reasons.length ? reasons.join('，') : '可能需要VIP权限或开放平台未授权';
+        const songList = songs.map((s, i) => {
+            const tag = songStatusTag(s);
+            return `${i + 1}. ${s.name} - ${s.artist}${tag ? ` (${tag})` : ''}`;
+        }).join('\n');
+        return `"${keyword}"的搜索结果均无法播放：${reasonStr}。\n搜索结果:\n${songList}`;
     }
 
     // ---- 播放歌单 ----
@@ -564,6 +691,7 @@ class NeteaseMusic extends Plugin {
                 if (!audio || !mp.isPlaying) return '当前没有播放中的音乐';
                 audio.pause();
                 mp.stopMouthAnimation();
+                mp.stopLyricsSync();
                 this._isPaused = true;
                 this._updatePlaybackPrompt();
                 const t = this._formatTime(audio.currentTime);
@@ -574,12 +702,18 @@ class NeteaseMusic extends Plugin {
                 if (!audio) return '当前没有音乐可恢复';
                 await audio.play();
                 mp.startMouthAnimation();
+                if (this._currentMeta?.lyrics) {
+                    mp.startLyricsSync(audio, this._currentMeta.lyrics);
+                }
                 this._isPaused = false;
                 this._updatePlaybackPrompt();
                 return `继续播放: ${this._currentMeta?.title || '未知'}`;
             }
             case 'stop': {
                 mp.stop();
+                if (typeof global.hideLyricsBubble === 'function') {
+                    global.hideLyricsBubble();
+                }
                 this._queue.clear();
                 this._currentMeta = null;
                 this._isPaused = false;
@@ -798,7 +932,10 @@ class NeteaseMusic extends Plugin {
     async _login() {
         await this._syncAuthConfig();
         const status = await ncm.checkLogin();
-        if (status.loggedIn) return `已登录: ${status.message}`;
+        if (status.loggedIn) {
+            this._lastLoginOk = true;
+            return `已登录: ${status.message}`;
+        }
 
         const result = await ncm.login();
         const qrUrl = result.qrCodeUrl || result.clickableUrl;
@@ -807,7 +944,8 @@ class NeteaseMusic extends Plugin {
                 const { showNeteaseLoginQrModal } = require('./login-qr-modal');
                 await showNeteaseLoginQrModal({
                     qrCodeUrl: qrUrl,
-                    message: result.message
+                    message: result.message,
+                    onLoggedIn: () => { this._lastLoginOk = true; }
                 });
             } catch (e) {
                 this.context.log('warn', `${TAG} 扫码弹窗失败: ${e?.message || e}`);

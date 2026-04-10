@@ -143,12 +143,10 @@ async function applyAuthConfig(config = {}) {
     return { changed: true, configured: !!(appId && privateKey) };
 }
 
-async function searchSongs(keyword, limit = 5) {
-    const result = await run(`search song --keyword "${escapeShellArg(keyword)}" --limit ${limit}`);
-    if (result.code !== 200 || !result.data?.records) {
-        throw new Error(result.message || '搜索失败');
-    }
-    return result.data.records.map(s => ({
+function mapSongRecord(s) {
+    const fee = s.fee ?? (s.vipFlag ? 1 : (s.playFlag ? 0 : -1));
+    const st = s.privilege?.st ?? s.st ?? 0;
+    return {
         songId: s.originalId,
         encryptedId: s.id,
         name: s.name,
@@ -158,8 +156,19 @@ async function searchSongs(keyword, limit = 5) {
         durationStr: formatDuration(s.duration),
         playable: !!s.playFlag,
         vip: !!s.vipFlag,
-        coverUrl: s.coverImgUrl || ''
-    }));
+        fee,
+        st,
+        coverUrl: s.coverImgUrl || '',
+        tags: s.songTag || []
+    };
+}
+
+async function searchSongs(keyword, limit = 5) {
+    const result = await run(`search song --keyword "${escapeShellArg(keyword)}" --limit ${limit}`);
+    if (result.code !== 200 || !result.data?.records) {
+        throw new Error(result.message || '搜索失败');
+    }
+    return result.data.records.map(mapSongRecord);
 }
 
 async function searchAll(keyword, limit = 5) {
@@ -170,17 +179,7 @@ async function searchAll(keyword, limit = 5) {
     const out = {};
 
     if (data.songs?.length) {
-        out.songs = data.songs.slice(0, limit).map(s => ({
-            songId: s.originalId,
-            encryptedId: s.id,
-            name: s.name,
-            artist: (s.artists || []).map(a => a.name).join('/'),
-            album: s.album?.name || '',
-            duration: s.duration,
-            durationStr: formatDuration(s.duration),
-            playable: !!s.playFlag,
-            vip: !!s.vipFlag
-        }));
+        out.songs = data.songs.slice(0, limit).map(mapSongRecord);
     }
 
     if (data.playlists?.length) {
@@ -211,16 +210,7 @@ async function recommendDaily(limit = 10) {
     const result = await run(`recommend daily --limit ${limit}`);
     if (result.code !== 200) throw new Error(result.message || '获取推荐失败');
     const records = Array.isArray(result.data) ? result.data : (result.data?.records || result.data?.dailySongs || []);
-    return records.slice(0, limit).map(s => ({
-        songId: s.originalId,
-        encryptedId: s.id,
-        name: s.name,
-        artist: (s.artists || []).map(a => a.name).join('/'),
-        album: s.album?.name || '',
-        duration: s.duration,
-        durationStr: formatDuration(s.duration),
-        playable: !!s.playFlag
-    }));
+    return records.slice(0, limit).map(mapSongRecord);
 }
 
 async function checkLogin() {
@@ -274,15 +264,7 @@ async function playlistTracks(encryptedPlaylistId, limit = 30, offset = 0) {
     const records = result.data?.records || result.data || [];
     const songs = Array.isArray(records) ? records : [];
     return songs.map(s => ({
-        songId: s.originalId,
-        encryptedId: s.id,
-        name: s.name,
-        artist: (s.artists || []).map(a => a.name).join('/'),
-        album: s.album?.name || '',
-        duration: s.duration,
-        durationStr: formatDuration(s.duration),
-        playable: !!s.playFlag,
-        tags: s.songTag || [],
+        ...mapSongRecord(s),
         addTime: s.extMap?.addTime ? Number(s.extMap.addTime) : null
     }));
 }
@@ -335,17 +317,7 @@ async function recommendFM(limit = 10) {
                 const key = s.id || s.originalId;
                 if (seen.has(key)) continue;
                 seen.add(key);
-                allSongs.push({
-                    songId: s.originalId,
-                    encryptedId: s.id,
-                    name: s.name,
-                    artist: (s.artists || []).map(a => a.name).join('/'),
-                    album: s.album?.name || '',
-                    duration: s.duration,
-                    durationStr: formatDuration(s.duration),
-                    playable: !!s.playFlag,
-                    tags: s.songTag || []
-                });
+                allSongs.push(mapSongRecord(s));
             }
         } catch { break; }
     }
@@ -362,17 +334,7 @@ async function recommendHeartbeat(playlistEncId, songEncId, count = 20) {
     const result = await run(args);
     if (result.code !== 200) throw new Error(result.message || '获取心动推荐失败');
     const records = Array.isArray(result.data) ? result.data : (result.data?.records || []);
-    return records.map(s => ({
-        songId: s.originalId,
-        encryptedId: s.id,
-        name: s.name,
-        artist: (s.artists || []).map(a => a.name).join('/'),
-        album: s.album?.name || '',
-        duration: s.duration,
-        durationStr: formatDuration(s.duration),
-        playable: !!s.playFlag,
-        tags: s.songTag || []
-    }));
+    return records.map(mapSongRecord);
 }
 
 async function playlistRadar() {
@@ -447,7 +409,7 @@ async function userListenRanking(limit = 50) {
 }
 
 module.exports = {
-    parseNcmCliStdout, applyAuthConfig, isLoginRequiredError,
+    parseNcmCliStdout, applyAuthConfig, isLoginRequiredError, mapSongRecord,
     searchSongs, searchAll, recommendDaily, checkLogin, login, run,
     playlistCreated, playlistCollected, playlistTracks, playlistDetail,
     playlistCreate, playlistAddSongs, playlistRemoveSongs,

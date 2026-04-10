@@ -1,10 +1,8 @@
 {
   "name": "rebirth-feiniu-music",
-  "version": "2.0.0",
   "private": true,
-  "description": "肥牛网易云插件依赖（ncm-cli + 扫码二维码）",
+  "description": "肥牛音乐插件本地依赖（仅本目录）",
   "dependencies": {
-    "@music163/ncm-cli": "^0.1.0",
     "qrcode": "^1.5.4"
   }
 }

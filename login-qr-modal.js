@@ -227,6 +227,9 @@ async function showNeteaseLoginQrModal(opts) {
                 disposeModalTimers(root);
                 setMainWindowClickThrough(true);
                 if (root.parentNode) root.remove();
+                if (typeof opts.onLoggedIn === 'function') {
+                    try { opts.onLoggedIn(); } catch {}
+                }
                 return;
             }
         } catch { /* 忽略单次失败 */ } finally {

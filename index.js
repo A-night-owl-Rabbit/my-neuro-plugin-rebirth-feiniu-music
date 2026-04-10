@@ -178,11 +178,26 @@ class NeteaseMusic extends Plugin {
         const meta = this._currentMeta;
         const qInfo = this._queue?.list();
 
-        let prompt = '可使用本插件注册的 netease_* 工具处理网易云相关请求；按用户意图选用工具即可。';
+        let prompt = `你拥有网易云音乐能力，可以搜索歌曲、播放音乐、管理歌单、查看推荐、智能推荐、偏好分析。
+当用户要求听歌、放音乐、搜歌、推荐歌曲时，使用 netease_ 开头的工具。
+当用户说"播放每日推荐""放推荐的歌"等要求播放推荐时，调用 netease_recommend 并设置 play=true。
+当用户说"播放歌单xxx"时，调用 netease_play_playlist，会加载歌单全部歌曲到队列播放。
+当用户说"随机播放""打乱播放"时，调用 netease_shuffle 开启随机模式，或在播放歌单/推荐时设置 shuffle=true。
+当用户说"推荐点喜欢的""私人漫游""根据我的口味推荐"时，调用 netease_smart_recommend mode=fm。
+当用户说"类似的歌""心动模式""和这首差不多的"时，调用 netease_smart_recommend mode=heartbeat。
+当用户说"分析我的偏好""我喜欢什么音乐"时，调用 netease_preference。`;
 
         if (isPlaying && meta) {
             const queueStr = qInfo?.total > 1 ? `，队列 ${(qInfo.currentIndex + 1)}/${qInfo.total}` : '';
-            prompt += ` 当前${this._isPaused ? '暂停' : '播放'}: ${meta.title} - ${meta.artist}${queueStr}；勿因无关对话停止音乐，仅响应明确的播放控制或停止指令。`;
+            prompt += `
+
+【当前播放状态】正在${this._isPaused ? '暂停' : '播放'}: ${meta.title} - ${meta.artist}${queueStr}
+重要规则：
+- 音乐正在播放中，不要因为用户发起新话题就停止音乐
+- 只有当用户明确说"停止播放""关掉音乐""别放了"等停止指令时，才调用 netease_control 的 stop
+- 用户说其他话题（聊天、提问等）时，音乐继续播放，正常回答用户问题即可
+- 用户说"暂停""下一首""音量调低"等控制指令时，调用对应的 netease_control
+- 不要主动提及正在播放音乐，除非用户问起`;
         }
 
         this.context.addSystemPromptPatch('netease_music_capability', prompt);

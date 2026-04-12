@@ -3,6 +3,23 @@ const ncm = require('./ncm-bridge');
 
 const MAX_CONSECUTIVE_SKIPS = 10;
 
+/** 伴奏 / 器乐版等：正常听歌应优先人声版，仅在人声候选全部解析失败后再尝试 */
+function isLikelyInstrumentalOrKaraokeName(name) {
+    const s = String(name || '');
+    if (!s.trim()) return false;
+    return /伴奏|伴唱|无人声|纯伴奏|backing\s*track|instrumental|off[\s-]*vocal|karaoke|\binst\.?\b|\(inst\)|\[inst\]/i.test(s);
+}
+
+function sortPlayableCandidates(list) {
+    const vocalFirst = [...list].sort((a, b) => {
+        const ai = isLikelyInstrumentalOrKaraokeName(a.name) ? 1 : 0;
+        const bi = isLikelyInstrumentalOrKaraokeName(b.name) ? 1 : 0;
+        if (ai !== bi) return ai - bi;
+        return 0;
+    });
+    return [...vocalFirst.filter(r => r.playable), ...vocalFirst.filter(r => !r.playable)];
+}
+
 class QueueManager {
     constructor(log) {
         this._queue = [];
@@ -230,11 +247,12 @@ class QueueManager {
             const nameMatches = exactResults.filter(r =>
                 r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name)
             );
-            const sorted = [...nameMatches.filter(r => r.playable), ...nameMatches.filter(r => !r.playable)];
+            const sorted = sortPlayableCandidates(nameMatches);
             for (const r of sorted) {
                 try {
                     const resolved = await urlResolver.resolve(r);
-                    this._log('info', `🎵 [网易云] 搜索到原版: ${r.name} - ${r.artist}`);
+                    const verTag = isLikelyInstrumentalOrKaraokeName(r.name) ? '（器乐/伴奏版）' : '';
+                    this._log('info', `🎵 [网易云] 搜索到可播放版本${verTag}: ${r.name} - ${r.artist}`);
                     await playFn(resolved.url, resolved.metadata);
                     return { song, position: this._currentIndex + 1, total: this._queue.length };
                 } catch (err) {
@@ -253,11 +271,12 @@ class QueueManager {
                 r.songId !== song.songId &&
                 (r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name))
             );
-            const sorted = [...candidates.filter(r => r.playable), ...candidates.filter(r => !r.playable)];
+            const sorted = sortPlayableCandidates(candidates);
             for (const r of sorted) {
                 try {
                     const resolved = await urlResolver.resolve(r);
-                    this._log('info', `🎵 [网易云] 播放替代版: ${r.name} - ${r.artist}`);
+                    const altTag = isLikelyInstrumentalOrKaraokeName(r.name) ? '（器乐/伴奏）' : '';
+                    this._log('info', `🎵 [网易云] 播放替代版${altTag}: ${r.name} - ${r.artist}`);
                     const metadata = {
                         ...resolved.metadata,
                         title: `${song.name} (${r.artist}版)`,

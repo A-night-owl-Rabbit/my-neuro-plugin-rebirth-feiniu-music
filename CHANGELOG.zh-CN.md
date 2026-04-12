@@ -1,5 +1,17 @@
 # 更新说明
 
+## 2026-04-12（v2.0.3）
+
+### 队列解析与替代版本（`queue-manager.js`）
+
+- **伴奏 / 器乐版识别**：新增 `isLikelyInstrumentalOrKaraokeName`，识别歌名中含「伴奏」「instrumental」「off vocal」「karaoke」等常见器乐/伴奏表述。
+- **解析顺序**：在「搜索到可播放版本」「播放替代版」分支中引入 `sortPlayableCandidates`：在可播放候选之间**优先尝试人声版 URL 解析**，器乐/伴奏版排在后面，降低「主歌被伴奏顶替」的概率；日志中会对器乐/伴奏候选附加标注，便于排查。
+
+### 仓库与元数据
+
+- **`metadata.json`**：版本号 **2.0.3**。
+- **`plugin_config.json`**：与公开仓库规范一致，`appId` / `privateKey` 的 `value` 为空；歌词气泡偏移等与文档默认一致，不附带本机个人布局参数。
+
 ## 2026-04-10（v2.0.2）
 
 - **系统提示词**：仓库 `index.js` 中的 `addSystemPromptPatch`（`_updatePlaybackPrompt`）恢复为与日常使用一致的**完整版**引导说明（工具选用、播放中勿误停音乐等），便于 Fork 后直接获得与作者推荐配置相近的 AI 行为。

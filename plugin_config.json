@@ -80,7 +80,35 @@
     "title": "歌词气泡缩放",
     "description": "歌词气泡整体缩放比例，1.0为原始大小，建议范围0.4~2.0",
     "type": "number",
-    "default": 1.0,
+    "default": 1,
     "value": "1.0"
+  },
+  "bili_fallback_enabled": {
+    "title": "B站音乐回退",
+    "description": "当网易云搜不到或播放不了歌曲时，自动从B站搜索音乐视频下载音频播放",
+    "type": "boolean",
+    "default": true,
+    "value": true
+  },
+  "bili_fallback_min_play_count": {
+    "title": "B站回退-最低播放量",
+    "description": "从B站选择视频时，播放量低于此值的视频会被过滤掉",
+    "type": "number",
+    "default": 10000,
+    "value": 10000
+  },
+  "bili_fallback_max_duration": {
+    "title": "B站回退-最大视频时长(秒)",
+    "description": "超过此时长的视频不会被选择，避免下载过长的视频。默认600秒(10分钟)",
+    "type": "number",
+    "default": 600,
+    "value": 600
+  },
+  "yt_dlp_path": {
+    "title": "yt-dlp路径",
+    "description": "yt-dlp可执行文件路径，用于从B站下载音频。如果已加入PATH可填 yt-dlp",
+    "type": "string",
+    "default": "yt-dlp",
+    "value": "yt-dlp"
   }
 }

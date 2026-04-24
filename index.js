@@ -2,6 +2,8 @@ const { Plugin } = require('../../../js/core/plugin-base.js');
 const ncm = require('./ncm-bridge');
 const urlResolver = require('./url-resolver');
 const { QueueManager } = require('./queue-manager');
+const { BiliMusicFallback } = require('./bili-music-fallback');
+const { findLyrics } = require('./lyrics-finder');
 
 const TAG = '🎵 [肥牛音乐]';
 
@@ -28,11 +30,20 @@ class NeteaseMusic extends Plugin {
         this._authWarnFingerprint = null;
         this._loginCheckTimer = null;
         this._lastLoginOk = false;
+        this._biliFallback = null;
     }
 
     async onInit() {
-        this._queue = new QueueManager((level, msg) => this.context.log(level, msg));
         this._readConfig();
+
+        this._biliFallback = new BiliMusicFallback((level, msg) => this.context.log(level, msg));
+        try {
+            await this._biliFallback.init(this._cfg);
+        } catch (err) {
+            this.context.log('warn', `${TAG} B站回退模块初始化失败（不影响主功能）: ${err.message}`);
+        }
+
+        this._queue = new QueueManager((level, msg) => this.context.log(level, msg), this._biliFallback);
         await this._syncAuthConfig();
         this.context.log('info', `${TAG} 插件初始化完成`);
     }
@@ -185,7 +196,8 @@ class NeteaseMusic extends Plugin {
 当用户说"随机播放""打乱播放"时，调用 netease_shuffle 开启随机模式，或在播放歌单/推荐时设置 shuffle=true。
 当用户说"推荐点喜欢的""私人漫游""根据我的口味推荐"时，调用 netease_smart_recommend mode=fm。
 当用户说"类似的歌""心动模式""和这首差不多的"时，调用 netease_smart_recommend mode=heartbeat。
-当用户说"分析我的偏好""我喜欢什么音乐"时，调用 netease_preference。`;
+当用户说"分析我的偏好""我喜欢什么音乐"时，调用 netease_preference。
+注意：当网易云播放不了时，系统会自动从B站搜索音乐视频并下载音频播放，无需用户额外操作。`;
 
         if (isPlaying && meta) {
             const queueStr = qInfo?.total > 1 ? `，队列 ${(qInfo.currentIndex + 1)}/${qInfo.total}` : '';
@@ -580,6 +592,155 @@ class NeteaseMusic extends Plugin {
             .map(x => x.song);
     }
 
+    /**
+     * 从关键词中提取歌手名和歌名。
+     *
+     * 核心思路：在搜索结果中统计每个 token 在「歌名」和「歌手」字段的出现比例。
+     * 歌名 token 会在大部分结果的 name 字段出现，歌手 token 则不会（或仅作为"原唱"标注）。
+     *
+     * 特殊处理：
+     *  - 翻唱版歌名常有 "[原唱: 周杰伦]" "(原唱：XXX)" "(Cover XXX)" 等标注，
+     *    这些会误让歌手名出现在 name 字段中，需要先剥离
+     *  - 用「出现比例」而非「绝对数量」判断，更鲁棒
+     */
+    _extractArtistFromKeyword(keyword, songs) {
+        const raw = keyword.replace(/的/g, ' ');
+        const tokens = raw.split(/[\s/]+/).filter(Boolean);
+        if (tokens.length < 2) return { songName: keyword, artistName: '' };
+
+        // 剥离歌名中的"原唱 / Cover / 翻唱 / 版"等标注，避免歌手名混入歌名匹配
+        const stripAnnotations = (name) => {
+            return (name || '')
+                .replace(/[\[\(（【][^\]\)）】]*?(原唱|翻唱|cover|作词|作曲|feat\.?|ft\.?|remix|版|by)[^\]\)）】]*?[\]\)）】]/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+
+        const n = songs.length || 1;
+        const stats = tokens.map(t => {
+            const tLower = t.toLowerCase();
+            let inName = 0, inArtist = 0, exactArtist = 0;
+            for (const s of songs) {
+                const cleanName = stripAnnotations(s.name).toLowerCase();
+                const artist = (s.artist || '').toLowerCase();
+                if (cleanName.includes(tLower)) inName++;
+                if (artist.includes(tLower)) inArtist++;
+                const parts = artist.split('/').map(a => a.trim());
+                if (parts.includes(tLower)) exactArtist++;
+            }
+            return {
+                token: t,
+                inName, inArtist, exactArtist,
+                nameRatio: inName / n,
+                artistRatio: inArtist / n
+            };
+        });
+
+        let best = null;
+
+        // 优先级1：该 token 出现在歌手字段，且在歌名字段（已剥离"原唱"标注）中出现很少 (<30%)
+        // 这是判断"周杰伦"是歌手的最强信号
+        const p1 = stats
+            .filter(s => s.inArtist > 0 && s.nameRatio < 0.3)
+            .sort((a, b) => b.artistRatio - a.artistRatio);
+        if (p1.length) best = p1[0];
+
+        // 优先级2：即使 artist 字段未出现（搜索结果全是翻唱），
+        // 通过比例判断：一个 token 主导歌名（>60%），另一个 token 极少在歌名中（<30%）
+        if (!best) {
+            const dominant = stats.find(s => s.nameRatio >= 0.6);
+            if (dominant) {
+                const candidates = stats.filter(s => s !== dominant && s.nameRatio < 0.3);
+                if (candidates.length === 1) best = candidates[0];
+            }
+        }
+
+        // 优先级3：精确匹配过歌手名且不是歌名主导 token
+        if (!best) {
+            const p3 = stats.filter(s => s.exactArtist >= 1 && s.nameRatio < 0.5);
+            if (p3.length) best = p3.sort((a, b) => b.exactArtist - a.exactArtist)[0];
+        }
+
+        if (best) {
+            const remaining = tokens.filter(t => t !== best.token).join(' ');
+            return { songName: remaining || keyword, artistName: best.token };
+        }
+
+        return { songName: keyword, artistName: '' };
+    }
+
+    /**
+     * 严格判断一首歌是否匹配指定歌手。
+     *
+     * 通过分隔符（/、,、;、&、·）拆分联合歌手，每一部分必须与目标 exact 匹配，
+     * 或只能有 1~2 个字符的差异（容忍"周杰倫"/"周杰伦"这类繁简转换）。
+     *
+     * 关键：拒绝山寨账号（如"周杰伦♚"、"周杰伦-官方"等名字带后缀的仿冒账号）
+     */
+    _isArtistMatch(song, artistName) {
+        if (!artistName) return true;
+        const target = artistName.toLowerCase().trim();
+        const artist = (song.artist || '').toLowerCase().trim();
+        if (!artist) return false;
+
+        const parts = artist.split(/[\/,、;&·・]/).map(a => a.trim()).filter(Boolean);
+        return parts.some(p => {
+            if (p === target) return true;
+            // 容忍少量字符差异：如繁简体("周杰倫" vs "周杰伦")
+            if (Math.abs(p.length - target.length) <= 1) {
+                let diff = 0;
+                const shorter = p.length < target.length ? p : target;
+                const longer = p.length < target.length ? target : p;
+                for (let i = 0; i < shorter.length; i++) {
+                    if (shorter[i] !== longer[i]) diff++;
+                    if (diff > 1) return false;
+                }
+                return true;
+            }
+            return false;
+        });
+    }
+
+    /**
+     * 判断一首歌的歌名是否匹配目标歌名。
+     * 会剥离 (DJ版)(钢琴版)(Live)[原唱:XXX] 等修饰词后做匹配。
+     */
+    _isSongNameMatch(song, songName) {
+        if (!songName) return true;
+        const target = songName.toLowerCase().trim();
+        const raw = (song.name || '').toLowerCase().trim();
+        const stripped = raw.replace(/[\[\(（【][^\]\)）】]*[\]\)）】]/g, '').trim();
+        return stripped === target ||
+               stripped.includes(target) ||
+               target.includes(stripped);
+    }
+
+    /**
+     * 多源歌词查找（供B站回退使用）。
+     * 优先用网易云原版歌词，网易云拿不到时降级到 QQ 音乐。
+     * 即使网易云屏蔽了周杰伦等 VIP 歌手的搜索结果，QQ 音乐仍能拿到歌词。
+     */
+    async _fetchLyricsForBili(songName, artistName, candidateList) {
+        const log = (level, msg) => this.context.log(level, `${TAG} [歌词] ${msg}`);
+
+        if (candidateList && candidateList.length) {
+            for (const song of candidateList.slice(0, 3)) {
+                const lyrics = await findLyrics({
+                    songName: song.name || songName,
+                    artistName: artistName || song.artist,
+                    songId: song.songId,
+                    encryptedId: song.encryptedId
+                }, log);
+                if (lyrics) return lyrics;
+            }
+        }
+
+        if (songName || artistName) {
+            return await findLyrics({ songName, artistName }, log);
+        }
+        return null;
+    }
+
     // ---- 播放单曲 ----
     async _play(params) {
         const { keyword } = params;
@@ -594,12 +755,29 @@ class NeteaseMusic extends Plugin {
         const alive = songs.filter(s => !(s.st < 0));
         const candidates = this._rankCandidates(alive, keyword);
 
-        for (const song of candidates) {
+        // 检测用户是否指定了歌手（如"周杰伦 青花瓷"）
+        const { songName, artistName } = this._extractArtistFromKeyword(keyword, songs);
+        const hasExplicitArtist = !!artistName;
+
+        if (hasExplicitArtist) {
+            this.context.log('info', `${TAG} 检测到指定歌手: "${artistName}"，歌名: "${songName}"`);
+        }
+
+        // 如果用户指定了歌手：必须同时满足「歌名匹配」+「歌手严格匹配」
+        // 拒绝山寨账号（如"周杰伦♚"）和不相关的歌（如搜"周杰伦 牛仔很忙"却播"把坏天气当风景"）
+        const artistMatched = hasExplicitArtist
+            ? candidates.filter(s => this._isArtistMatch(s, artistName) && this._isSongNameMatch(s, songName))
+            : candidates;
+
+        if (hasExplicitArtist) {
+            this.context.log('info', `${TAG} 网易云候选 ${candidates.length} 首，严格匹配"${artistName} - ${songName}"后剩 ${artistMatched.length} 首`);
+        }
+
+        for (const song of artistMatched) {
             try {
                 this.context.log('info', `${TAG} 尝试播放: ${song.name} - ${song.artist}`);
                 const resolved = await urlResolver.resolve(song);
 
-                // 如果当前没有活跃队列，创建一个单曲队列，确保 onSongEnd 链路完整
                 if (!this._queue.isActive) {
                     this._queue.clear();
                     this._queue.add(song);
@@ -619,6 +797,41 @@ class NeteaseMusic extends Plugin {
             }
         }
 
+        // 指定歌手的版本都播放不了 -> 直接走B站回退，不降级到其他歌手
+        if (this._biliFallback) {
+            try {
+                const biliKeyword = hasExplicitArtist ? `${artistName} ${songName}` : keyword;
+                this.context.log('info', `${TAG} 网易云${hasExplicitArtist ? `"${artistName}"的版本` : '所有候选'}均失败，尝试B站回退: "${biliKeyword}"`);
+
+                // 多源拉取原版歌词：优先网易云，失败时用 QQ 音乐
+                const originalLyrics = await this._fetchLyricsForBili(
+                    songName,
+                    artistName,
+                    hasExplicitArtist ? artistMatched : candidates
+                );
+
+                const biliResult = await this._biliFallback.searchAndPlay(
+                    biliKeyword,
+                    mp.playFromUrl.bind(mp),
+                    { lyrics: originalLyrics, songName, artistName }
+                );
+                if (biliResult) {
+                    if (!this._queue.isActive) {
+                        this._queue.clear();
+                        this._queue.add({ name: songName, artist: artistName || biliResult.artist, durationStr: '' });
+                        this._queue._currentIndex = 0;
+                        this._queue._isActive = true;
+                    }
+                    this._updatePlaybackPrompt();
+                    const lyricsNote = originalLyrics ? '，已加载网易云原版歌词' : '';
+                    return `正在通过B站播放: ${biliResult.title} (来源: B站视频 ${biliResult.bvid})${lyricsNote}`;
+                }
+            } catch (err) {
+                this.context.log('warn', `${TAG} B站回退失败: ${err.message}`);
+            }
+        }
+
+        // B站也失败了，如果之前限制了歌手，现在提示用户
         const delistedCount = songs.filter(s => s.st < 0).length;
         const vipCount = songs.filter(s => (s.fee === 1 || s.vip) && s.st >= 0).length;
         const purchaseCount = songs.filter(s => s.fee === 4).length;
@@ -633,7 +846,8 @@ class NeteaseMusic extends Plugin {
             const tag = songStatusTag(s);
             return `${i + 1}. ${s.name} - ${s.artist}${tag ? ` (${tag})` : ''}`;
         }).join('\n');
-        return `"${keyword}"的搜索结果均无法播放：${reasonStr}。\n搜索结果:\n${songList}`;
+        const biliNote = this._biliFallback ? '（网易云和B站均未找到可播放的音源）' : '';
+        return `"${keyword}"的搜索结果均无法播放${biliNote}：${reasonStr}。\n搜索结果:\n${songList}`;
     }
 
     // ---- 播放歌单 ----
@@ -1164,6 +1378,17 @@ class NeteaseMusic extends Plugin {
         if (!seconds || isNaN(seconds)) return '0:00';
         const s = Math.floor(seconds);
         return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+    }
+
+    async onStop() {
+        if (this._loginCheckTimer) {
+            clearInterval(this._loginCheckTimer);
+            this._loginCheckTimer = null;
+        }
+        if (this._biliFallback) {
+            this._biliFallback.destroy();
+            this._biliFallback = null;
+        }
     }
 }
 

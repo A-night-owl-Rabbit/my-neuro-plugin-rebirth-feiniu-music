@@ -1,5 +1,20 @@
 # 更新说明
 
+## 2026-04-25（v2.1.0）
+
+### B 站音乐回退与歌词辅助
+
+- **B 站回退**（`bili-music-fallback.js`）：当网易云搜不到或无法播放时，可自动从 B 站搜索音乐类视频，使用本机 **yt-dlp** 拉取音源，经本机临时 HTTP 服务供播放器使用。支持在插件配置中开关、最低播放量、最大时长、yt-dlp 路径等。
+- **歌词辅助**（`lyrics-finder.js`）：在部分外链 / 回退场景下辅助歌词显示。
+- **依赖**：`bilibili-api-ts`、`axios` 等，已写入 `package.json` 与 `package-lock.json`（与本地一致）。
+
+### 仓库与隐私
+
+- **`metadata.json`**：版本号 **2.1.0**。
+- **`plugin_config.json`**：继续仅含字段说明；`appId` / `privateKey` 的 `value` 为空；歌词气泡偏移等为文档默认（`-20` / `-20`），不附带本机布局。
+- **不纳入版本库**：`temp_bili_audio/` 临时下载目录与 cookies 等见根目录 `.gitignore`，请勿将个人凭证提交到公开仓库。
+- **不纳入 `node_modules/dependencies/`**：为 `bilibili-api-ts` 的误依赖 `dependencies@0.0.1` 包，其嵌套 `request` 含测试用示例凭证，会触发 GitHub 推送保护；**运行时代码未 `require` 此包**；本机 `npm install` 后若出现该目录可忽略，勿提交到 Git。
+
 ## 2026-04-12（v2.0.3）
 
 ### 队列解析与替代版本（`queue-manager.js`）

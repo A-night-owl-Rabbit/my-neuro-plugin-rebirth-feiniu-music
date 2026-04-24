@@ -1,5 +1,6 @@
 const urlResolver = require('./url-resolver');
 const ncm = require('./ncm-bridge');
+const { findLyrics } = require('./lyrics-finder');
 
 const MAX_CONSECUTIVE_SKIPS = 10;
 
@@ -21,7 +22,7 @@ function sortPlayableCandidates(list) {
 }
 
 class QueueManager {
-    constructor(log) {
+    constructor(log, biliFallback) {
         this._queue = [];
         this._currentIndex = -1;
         this._isActive = false;
@@ -33,6 +34,11 @@ class QueueManager {
         this._shuffleMode = false;
         this._shuffleOrder = [];
         this._shuffleIndex = -1;
+        this._biliFallback = biliFallback || null;
+    }
+
+    setBiliFallback(fallback) {
+        this._biliFallback = fallback || null;
     }
 
     add(songInfo) {
@@ -183,7 +189,25 @@ class QueueManager {
         this._log('info', `🎵 [网易云] ${modeTag}播放队列 [${this._currentIndex + 1}/${this._queue.length}]: ${song.name} - ${song.artist}`);
 
         if (song.st < 0) {
-            this._log('warn', `🎵 [网易云] 跳过: ${song.name}（已下架或无版权 st=${song.st}）`);
+            this._log('warn', `🎵 [网易云] 跳过: ${song.name}（已下架或无版权 st=${song.st}），尝试B站回退...`);
+            if (this._biliFallback) {
+                try {
+                    const artist = (song.artist || '').split('/')[0];
+                    const keyword = `${song.name} ${artist}`.trim();
+                    const lyrics = await this._fetchSongLyrics(song);
+                    const biliResult = await this._biliFallback.searchAndPlay(keyword, playFn, {
+                        lyrics, songName: song.name, artistName: artist
+                    });
+                    if (biliResult) {
+                        this._consecutiveSkips = 0;
+                        this._isTransitioning = false;
+                        return { song: { ...song, biliSource: biliResult }, position: this._currentIndex + 1, total: this._queue.length };
+                    }
+                } catch (err) {
+                    this._log('warn', `🎵 [网易云] B站回退异常: ${err.message}`);
+                }
+            }
+
             this._consecutiveSkips++;
             if (this._consecutiveSkips >= MAX_CONSECUTIVE_SKIPS) {
                 this._log('warn', `🎵 [网易云] 连续 ${MAX_CONSECUTIVE_SKIPS} 首无法播放，暂停队列`);
@@ -212,7 +236,7 @@ class QueueManager {
             this._log('warn', `🎵 [网易云] 直接解析失败: ${song.name}，搜索可播放版本...`);
         }
 
-        // 三级降级：① 搜原版(歌名+歌手) → ② 搜替代版(仅歌名) → ③ 跳过
+        // 三级降级：① 搜原版(歌名+歌手) → ② 搜替代版(仅歌名) → ③ B站回退
         const result = await this._findAndPlay(song, playFn);
         this._isBusyResolving = false;
 
@@ -223,7 +247,27 @@ class QueueManager {
         }
 
         const reason = song.vip && !song.playable ? 'VIP歌曲且开放平台未授权' : !song.playable ? '开放平台未授权' : song.vip ? 'VIP歌曲' : '无法获取播放地址';
-        this._log('warn', `🎵 [网易云] 跳过: ${song.name}（${reason}，原版和替代版均不可用）`);
+        this._log('warn', `🎵 [网易云] ${song.name}（${reason}，原版和替代版均不可用），尝试B站回退...`);
+
+        if (this._biliFallback) {
+            try {
+                const artist = (song.artist || '').split('/')[0];
+                const keyword = `${song.name} ${artist}`.trim();
+                const lyrics = await this._fetchSongLyrics(song);
+                const biliResult = await this._biliFallback.searchAndPlay(keyword, playFn, {
+                    lyrics, songName: song.name, artistName: artist
+                });
+                if (biliResult) {
+                    this._consecutiveSkips = 0;
+                    this._isTransitioning = false;
+                    return { song: { ...song, biliSource: biliResult }, position: this._currentIndex + 1, total: this._queue.length };
+                }
+            } catch (err) {
+                this._log('warn', `🎵 [网易云] B站回退异常: ${err.message}`);
+            }
+        }
+
+        this._log('warn', `🎵 [网易云] 跳过: ${song.name}（B站回退也失败）`);
         this._consecutiveSkips++;
         this._isTransitioning = false;
 
@@ -235,19 +279,27 @@ class QueueManager {
 
         if (this.hasNext) return this.playNext(playFn);
         this._isActive = false;
+
         return null;
     }
 
     async _findAndPlay(song, playFn) {
-        // ① 精确搜索：歌名 + 第一位歌手，找同名歌曲
-        // 优先尝试 playable=true 的，再尝试 playable=false 的（VIP 用户可能仍可播放）
+        // ① 精确搜索：歌名 + 歌手都必须匹配（拒绝 INKK 这类山寨/翻唱）
+        // 只在找到原版不同版本（如高音质版、Remastered版）时才会命中，
+        // 失败后直接走B站回退，不会降级到其他歌手的翻唱版
         try {
-            const keyword = `${song.name} ${(song.artist || '').split('/')[0]}`.trim();
+            const mainArtist = (song.artist || '').split('/')[0].trim();
+            const keyword = `${song.name} ${mainArtist}`.trim();
             const exactResults = await ncm.searchSongs(keyword, 5);
-            const nameMatches = exactResults.filter(r =>
-                r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name)
-            );
-            const sorted = sortPlayableCandidates(nameMatches);
+            const mainArtistLower = mainArtist.toLowerCase();
+            const nameAndArtistMatches = exactResults.filter(r => {
+                const nameOk = r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name);
+                if (!nameOk) return false;
+                // 歌手严格匹配：拆分 "A/B/C" 后每一段与 mainArtist exact 对比
+                const parts = (r.artist || '').toLowerCase().split(/[\/,、;&·・]/).map(a => a.trim());
+                return parts.some(p => p === mainArtistLower);
+            });
+            const sorted = sortPlayableCandidates(nameAndArtistMatches);
             for (const r of sorted) {
                 try {
                     const resolved = await urlResolver.resolve(r);
@@ -264,37 +316,40 @@ class QueueManager {
             if (ncm.isLoginRequiredError(err)) throw err;
         }
 
-        // ② 宽松搜索：仅用歌名，找任何同名/相似版本（同样优先 playable=true）
-        try {
-            const results = await ncm.searchSongs(song.name, 10);
-            const candidates = results.filter(r =>
-                r.songId !== song.songId &&
-                (r.name === song.name || r.name.includes(song.name) || song.name.includes(r.name))
-            );
-            const sorted = sortPlayableCandidates(candidates);
-            for (const r of sorted) {
-                try {
-                    const resolved = await urlResolver.resolve(r);
-                    const altTag = isLikelyInstrumentalOrKaraokeName(r.name) ? '（器乐/伴奏）' : '';
-                    this._log('info', `🎵 [网易云] 播放替代版${altTag}: ${r.name} - ${r.artist}`);
-                    const metadata = {
-                        ...resolved.metadata,
-                        title: `${song.name} (${r.artist}版)`,
-                        originalTitle: song.name,
-                        originalArtist: song.artist
-                    };
-                    await playFn(resolved.url, metadata);
-                    return { song: { ...song, altVersion: `${r.name} - ${r.artist}` }, position: this._currentIndex + 1, total: this._queue.length };
-                } catch (err) {
-                    if (ncm.isLoginRequiredError(err)) throw err;
-                    continue;
+        // ② 直接走B站回退（不再做"宽松搜索"降级到其他歌手的翻唱版）
+        if (this._biliFallback) {
+            try {
+                const artist = (song.artist || '').split('/')[0];
+                const keyword = `${song.name} ${artist}`.trim();
+                this._log('info', `🎵 [网易云] 未找到原版可播放版本，走B站回退: ${keyword}`);
+                const lyrics = await this._fetchSongLyrics(song);
+                const biliResult = await this._biliFallback.searchAndPlay(keyword, playFn, {
+                    lyrics, songName: song.name, artistName: artist
+                });
+                if (biliResult) {
+                    this._log('info', `🎵 [网易云] B站回退成功: ${biliResult.title} (${biliResult.bvid})`);
+                    return { song: { ...song, biliSource: biliResult }, position: this._currentIndex + 1, total: this._queue.length };
                 }
+            } catch (err) {
+                this._log('warn', `🎵 [网易云] B站回退异常: ${err.message}`);
             }
-        } catch (err) {
-            if (ncm.isLoginRequiredError(err)) throw err;
         }
 
         return null;
+    }
+
+    /**
+     * 多源拉取歌词（供B站回退使用）。
+     * 先试网易云，失败则降级到 QQ 音乐。
+     */
+    async _fetchSongLyrics(song) {
+        const log = (level, msg) => this._log(level, `🎵 [歌词] ${msg}`);
+        return await findLyrics({
+            songName: song.name,
+            artistName: (song.artist || '').split('/')[0],
+            songId: song.songId,
+            encryptedId: song.encryptedId
+        }, log);
     }
 
     onSongEnd(playFn) {

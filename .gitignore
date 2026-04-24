@@ -1,2 +1,10 @@
 package-lock.json
 *.log
+
+# B 站回退临时文件（勿提交本机下载与 cookies）
+temp_bili_audio/
+bili_cookies.txt
+*.m4a
+
+# bilibili-api-ts 误依赖的 npm 包名「dependencies」，其嵌套的 request 测试含示例 AWS 凭证，会触发 GitHub 推送保护；运行时代码未 require 此包
+node_modules/dependencies/

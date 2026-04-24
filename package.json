@@ -3,6 +3,8 @@
   "private": true,
   "description": "肥牛音乐插件本地依赖（仅本目录）",
   "dependencies": {
+    "axios": "^1.9.0",
+    "bilibili-api-ts": "^11.11.2",
     "qrcode": "^1.5.4"
   }
 }

@@ -1,114 +1,114 @@
-{
-  "appId": {
-    "title": "网易云开放平台 App ID",
-    "description": "用于同步到 ncm-cli 的开放平台 App ID，填写后插件会在启动和工具调用时自动写入",
-    "type": "string",
-    "default": "",
-    "value": ""
-  },
-  "privateKey": {
-    "title": "网易云开放平台 Private Key",
-    "description": "用于同步到 ncm-cli 的开放平台 Private Key，建议与 App ID 一起填写",
-    "type": "string",
-    "default": "",
-    "value": ""
-  },
-  "audio_quality": {
-    "title": "音频质量",
-    "description": "播放音质等级：standard(标准128k), higher(较高192k), exhigh(极高320k), lossless(无损), hires(Hi-Res)。VIP用户可选更高音质",
-    "type": "string",
-    "default": "exhigh",
-    "value": "exhigh"
-  },
-  "lyrics_offset_x": {
-    "title": "歌词气泡水平偏移",
-    "description": "歌词气泡相对模型中心的水平偏移(px)，负值偏左，正值偏右",
-    "type": "number",
-    "default": -20,
-    "value": -20
-  },
-  "lyrics_offset_y": {
-    "title": "歌词气泡垂直偏移",
-    "description": "歌词气泡相对模型中心的垂直偏移(px)，负值偏上，正值偏下",
-    "type": "number",
-    "default": -20,
-    "value": -20
-  },
-  "lyrics_min_width": {
-    "title": "歌词气泡最小宽度",
-    "description": "歌词气泡最小宽度(px)",
-    "type": "number",
-    "default": 160,
-    "value": "160"
-  },
-  "lyrics_max_width": {
-    "title": "歌词气泡最大宽度",
-    "description": "歌词气泡最大宽度(px)",
-    "type": "number",
-    "default": 320,
-    "value": "320"
-  },
-  "lyrics_padding_v": {
-    "title": "歌词气泡垂直内边距",
-    "description": "歌词气泡上下内边距(px)",
-    "type": "number",
-    "default": 16,
-    "value": "16"
-  },
-  "lyrics_padding_h": {
-    "title": "歌词气泡水平内边距",
-    "description": "歌词气泡左右内边距(px)",
-    "type": "number",
-    "default": 24,
-    "value": "24"
-  },
-  "lyrics_font_size": {
-    "title": "歌词气泡字体大小",
-    "description": "歌词文字字体大小(px)",
-    "type": "number",
-    "default": 16,
-    "value": "16"
-  },
-  "lyrics_border_radius": {
-    "title": "歌词气泡圆角",
-    "description": "歌词气泡圆角半径(px)",
-    "type": "number",
-    "default": 24,
-    "value": "24"
-  },
-  "lyrics_bubble_scale": {
-    "title": "歌词气泡缩放",
-    "description": "歌词气泡整体缩放比例，1.0为原始大小，建议范围0.4~2.0",
-    "type": "number",
-    "default": 1,
-    "value": "1.0"
-  },
-  "bili_fallback_enabled": {
-    "title": "B站音乐回退",
-    "description": "当网易云搜不到或播放不了歌曲时，自动从B站搜索音乐视频下载音频播放",
-    "type": "boolean",
-    "default": true,
-    "value": true
-  },
-  "bili_fallback_min_play_count": {
-    "title": "B站回退-最低播放量",
-    "description": "从B站选择视频时，播放量低于此值的视频会被过滤掉",
-    "type": "number",
-    "default": 10000,
-    "value": 10000
-  },
-  "bili_fallback_max_duration": {
-    "title": "B站回退-最大视频时长(秒)",
-    "description": "超过此时长的视频不会被选择，避免下载过长的视频。默认600秒(10分钟)",
-    "type": "number",
-    "default": 600,
-    "value": 600
-  },
-  "yt_dlp_path": {
-    "title": "yt-dlp路径",
-    "description": "yt-dlp可执行文件路径，用于从B站下载音频。如果已加入PATH可填 yt-dlp",
-    "type": "string",
-    "default": "yt-dlp",
-    "value": "yt-dlp"
-  }
+﻿{
+    "appId":  {
+                  "title":  "网易云开放平台 App ID",
+                  "description":  "用于同步到 ncm-cli 的开放平台 App ID，填写后插件会在启动和工具调用时自动写入",
+                  "type":  "string",
+                  "default":  "",
+                  "value":  ""
+              },
+    "privateKey":  {
+                       "title":  "网易云开放平台 Private Key",
+                       "description":  "用于同步到 ncm-cli 的开放平台 Private Key，建议与 App ID 一起填写",
+                       "type":  "string",
+                       "default":  "",
+                       "value":  ""
+                   },
+    "audio_quality":  {
+                          "title":  "音频质量",
+                          "description":  "播放音质等级：standard(标准128k), higher(较高192k), exhigh(极高320k), lossless(无损), hires(Hi-Res)。VIP用户可选更高音质",
+                          "type":  "string",
+                          "default":  "exhigh",
+                          "value":  "exhigh"
+                      },
+    "lyrics_offset_x":  {
+                            "title":  "歌词气泡水平偏移",
+                            "description":  "歌词气泡相对模型中心的水平偏移(px)，负值偏左，正值偏右",
+                            "type":  "number",
+                            "default":  -20,
+                            "value":  "100"
+                        },
+    "lyrics_offset_y":  {
+                            "title":  "歌词气泡垂直偏移",
+                            "description":  "歌词气泡相对模型中心的垂直偏移(px)，负值偏上，正值偏下",
+                            "type":  "number",
+                            "default":  -20,
+                            "value":  "100"
+                        },
+    "lyrics_min_width":  {
+                             "title":  "歌词气泡最小宽度",
+                             "description":  "歌词气泡最小宽度(px)",
+                             "type":  "number",
+                             "default":  160,
+                             "value":  "160"
+                         },
+    "lyrics_max_width":  {
+                             "title":  "歌词气泡最大宽度",
+                             "description":  "歌词气泡最大宽度(px)",
+                             "type":  "number",
+                             "default":  320,
+                             "value":  "320"
+                         },
+    "lyrics_padding_v":  {
+                             "title":  "歌词气泡垂直内边距",
+                             "description":  "歌词气泡上下内边距(px)",
+                             "type":  "number",
+                             "default":  16,
+                             "value":  "16"
+                         },
+    "lyrics_padding_h":  {
+                             "title":  "歌词气泡水平内边距",
+                             "description":  "歌词气泡左右内边距(px)",
+                             "type":  "number",
+                             "default":  24,
+                             "value":  "24"
+                         },
+    "lyrics_font_size":  {
+                             "title":  "歌词气泡字体大小",
+                             "description":  "歌词文字字体大小(px)",
+                             "type":  "number",
+                             "default":  16,
+                             "value":  "16"
+                         },
+    "lyrics_border_radius":  {
+                                 "title":  "歌词气泡圆角",
+                                 "description":  "歌词气泡圆角半径(px)",
+                                 "type":  "number",
+                                 "default":  24,
+                                 "value":  "24"
+                             },
+    "lyrics_bubble_scale":  {
+                                "title":  "歌词气泡缩放",
+                                "description":  "歌词气泡整体缩放比例，1.0为原始大小，建议范围0.4~2.0",
+                                "type":  "number",
+                                "default":  1.0,
+                                "value":  "1.0"
+                            },
+    "bili_fallback_enabled":  {
+                                  "title":  "B站音乐回退",
+                                  "description":  "当网易云搜不到或播放不了歌曲时，自动从B站搜索音乐视频下载音频播放",
+                                  "type":  "boolean",
+                                  "default":  true,
+                                  "value":  true
+                              },
+    "bili_fallback_min_play_count":  {
+                                         "title":  "B站回退-最低播放量",
+                                         "description":  "从B站选择视频时，播放量低于此值的视频会被过滤掉",
+                                         "type":  "number",
+                                         "default":  10000,
+                                         "value":  10000
+                                     },
+    "bili_fallback_max_duration":  {
+                                       "title":  "B站回退-最大视频时长(秒)",
+                                       "description":  "超过此时长的视频不会被选择，避免下载过长的视频。默认600秒(10分钟)",
+                                       "type":  "number",
+                                       "default":  600,
+                                       "value":  600
+                                   },
+    "yt_dlp_path":  {
+                        "title":  "yt-dlp路径",
+                        "description":  "yt-dlp可执行文件路径，用于从B站下载音频。如果已加入PATH可填 yt-dlp",
+                        "type":  "string",
+                        "default":  "yt-dlp",
+                        "value":  "yt-dlp"
+                    }
 }

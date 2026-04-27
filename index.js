@@ -29,6 +29,7 @@ class NeteaseMusic extends Plugin {
         this._cfg = {};
         this._authWarnFingerprint = null;
         this._loginCheckTimer = null;
+        this._musicPlayerInjectTimer = null;
         this._lastLoginOk = false;
         this._biliFallback = null;
     }
@@ -222,12 +223,17 @@ class NeteaseMusic extends Plugin {
     // ==================== monkey-patch musicPlayer ====================
 
     _patchMusicPlayer() {
+        if (this._musicPlayerInjectTimer) {
+            clearInterval(this._musicPlayerInjectTimer);
+            this._musicPlayerInjectTimer = null;
+        }
         const mp = global.musicPlayer;
         if (!mp) {
             this.context.log('warn', `${TAG} global.musicPlayer 不存在，延迟注入`);
-            const timer = setInterval(() => {
+            this._musicPlayerInjectTimer = setInterval(() => {
                 if (global.musicPlayer) {
-                    clearInterval(timer);
+                    clearInterval(this._musicPlayerInjectTimer);
+                    this._musicPlayerInjectTimer = null;
                     this._injectPlayFromUrl(global.musicPlayer);
                 }
             }, 2000);
@@ -237,7 +243,9 @@ class NeteaseMusic extends Plugin {
     }
 
     _injectPlayFromUrl(mp) {
-        if (mp._neteasePatched) return;
+        const alreadyBoundToThisPlugin = mp._neteasePatched && mp._neteasePluginOwner === this;
+        if (alreadyBoundToThisPlugin) return;
+        const wasPatched = !!mp._neteasePatched;
 
         const plugin = this;
 
@@ -300,7 +308,8 @@ class NeteaseMusic extends Plugin {
         };
 
         mp._neteasePatched = true;
-        this.context.log('info', `${TAG} playFromUrl 方法已注入`);
+        mp._neteasePluginOwner = this;
+        this.context.log('info', `${TAG} playFromUrl 方法已${wasPatched ? '重新绑定' : '注入'}`);
     }
 
     // ==================== 工具定义 ====================
@@ -1384,6 +1393,15 @@ class NeteaseMusic extends Plugin {
         if (this._loginCheckTimer) {
             clearInterval(this._loginCheckTimer);
             this._loginCheckTimer = null;
+        }
+        if (this._musicPlayerInjectTimer) {
+            clearInterval(this._musicPlayerInjectTimer);
+            this._musicPlayerInjectTimer = null;
+        }
+        const mp = global.musicPlayer;
+        if (mp?._neteasePluginOwner === this) {
+            delete mp._neteasePluginOwner;
+            mp._neteasePatched = false;
         }
         if (this._biliFallback) {
             this._biliFallback.destroy();

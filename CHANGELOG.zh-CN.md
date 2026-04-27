@@ -1,4 +1,8 @@
-﻿
+## 2.0.2 (2026-04-27)
+
+- 修复：移除 metadata.json 文件开头的 UTF-8 BOM，避免部分插件加载器直接 JSON.parse 时出现 metadata.json 解析失败: Unexpected token。
+
+
 ## 2.0.1 (2026-04-27)
 
 - 修复：热重载后 `playFromUrl` 仍绑定旧插件实例，导致歌单/队列只播完第一首、无法自动续播。现在每次 `onStart` 会按插件实例重新绑定，并在 `onStop` 清理 `musicPlayer` 上的 owner 与延迟注入轮询，避免继续引用已卸载实例的闭包。

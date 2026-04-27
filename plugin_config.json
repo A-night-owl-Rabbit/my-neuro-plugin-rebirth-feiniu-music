@@ -1,4 +1,4 @@
-﻿{
+{
     "appId":  {
                   "title":  "网易云开放平台 App ID",
                   "description":  "用于同步到 ncm-cli 的开放平台 App ID，填写后插件会在启动和工具调用时自动写入",
